@@ -242,42 +242,38 @@ ParticleLayer.jamParticlesInCell = function(ci, cj) {
   }
 };
 
-// ─── TrailLayer：目标减法逐帧衰减，积累粒子路径 ────────────────────
-const TrailLayer = {
-  _tc: null, _tctx: null,
+// 层 4：细胞核亮点（全新升级：强对比度、描边、易于观测）
+    // 首先批量绘制 Follower 的暗核
+    ctx.beginPath();
+    for (const p of ParticleLayer.particles) {
+      if (p.jammed || p.role === 1) continue;
+      ctx.moveTo(p.x + 2.0, p.y);
+      ctx.arc(p.x, p.y, 2.0, 0, Math.PI * 2);
+    }
+    ctx.fillStyle = '#ffb3c1'; // Follower 的核：亮玫瑰粉
+    ctx.fill();
 
-  init() {
-    this._tc        = document.createElement('canvas');
-    this._tc.width  = canvas.width;
-    this._tc.height = canvas.height;
-    this._tctx      = this._tc.getContext('2d');
-  },
+    // 接着批量绘制 Leader 的高亮核
+    ctx.beginPath();
+    for (const p of ParticleLayer.particles) {
+      if (p.jammed || p.role === 0) continue;
+      ctx.moveTo(p.x + 2.5, p.y);
+      ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2); // Leader 的核更大
+    }
+    ctx.fillStyle = '#ffffff'; // Leader 的核：纯白荧光
+    ctx.fill();
 
-  update() {
-    const tctx = this._tctx;
-    // 每帧将已有轨迹透明度削减 5%（约 20 帧 = 0.33 秒消退）
-    tctx.globalCompositeOperation = 'destination-out';
-    tctx.fillStyle = 'rgba(0,0,0,0.05)';
-    tctx.fillRect(0, 0, canvas.width, canvas.height);
-    tctx.globalCompositeOperation = 'source-over';
-
-    // 按颜色批量绘制轨迹点（减少 state 切换）
+    // 关键一步：为所有活细胞核加上独立微细黑边，从融球滤镜的浆体中强行解耦，使其极易被观测
+    ctx.beginPath();
     for (const p of ParticleLayer.particles) {
       if (p.jammed) continue;
-      tctx.beginPath();
-      tctx.arc(p.x, p.y, p.radius * 0.28, 0, Math.PI * 2);
-      tctx.fillStyle = p.color;
-      tctx.fill();
+      const r = p.role === 1 ? 2.5 : 2.0;
+      ctx.moveTo(p.x + r, p.y);
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
     }
-  },
-
-  draw() {
-    ctx.globalAlpha = 0.5;
-    ctx.drawImage(this._tc, 0, 0);
-    ctx.globalAlpha = 1.0;
-  }
-};
-
+    ctx.lineWidth = 0.6;
+    ctx.strokeStyle = '#000000';
+    ctx.stroke();
 // ─── ParticleLayer.update：链表空间哈希斥力 ────────────────────────
 ParticleLayer.update = function() {
   GridLayer.computeGradient();
