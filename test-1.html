@@ -39,10 +39,9 @@
 <div id="info">
     <strong>Fisher-KPP 皮肤愈合混合模拟 (2026)</strong><br>
     • 拖动鼠标：划破皮肤制造新伤口 &nbsp;
-    • <span style="color:#f87060">珊瑚红</span>粒子：Leader 细胞 &nbsp;
-    • <span style="color:#a03050">深玫瑰</span>粒子：Follower 细胞 &nbsp;
-    • 棕褐色：干燥结痂 &nbsp;
-    • 半透明拖尾：迁移轨迹
+    • 🟢 带有黑边的亮点：**可观测细胞核**（纯白为 Leader，粉色为 Follower） &nbsp;
+    • 🪐 向心长丝带：**细胞生成与迁移路径** &nbsp;
+    • 棕褐色：干燥结痂
 </div>
 
 <script>
@@ -175,7 +174,11 @@ const GridLayer = {
         uNew[idx] = Math.max(0, Math.min(1, ui + dt * (D[idx] * lap + r[idx] * ui * (1 - ui))));
       }
     }
-    for (let k = 0; k < u.length; k++) u[k] = uNew[k];
+    // 性能优化：高速指针交换缓冲区代替全量 for 循环赋值
+    const temp = GRID.u;
+    GRID.u = GRID.uNew;
+    GRID.uNew = temp;
+
     this.applyNeumannBC();
   },
 
@@ -242,38 +245,45 @@ ParticleLayer.jamParticlesInCell = function(ci, cj) {
   }
 };
 
-// 层 4：细胞核亮点（全新升级：强对比度、描边、易于观测）
-    // 首先批量绘制 Follower 的暗核
-    ctx.beginPath();
-    for (const p of ParticleLayer.particles) {
-      if (p.jammed || p.role === 1) continue;
-      ctx.moveTo(p.x + 2.0, p.y);
-      ctx.arc(p.x, p.y, 2.0, 0, Math.PI * 2);
-    }
-    ctx.fillStyle = '#ffb3c1'; // Follower 的核：亮玫瑰粉
-    ctx.fill();
+// ─── TrailLayer：长效衰减，绘制细胞运动矢量流线 ────────────────────
+const TrailLayer = {
+  _tc: null, _tctx: null,
 
-    // 接着批量绘制 Leader 的高亮核
-    ctx.beginPath();
-    for (const p of ParticleLayer.particles) {
-      if (p.jammed || p.role === 0) continue;
-      ctx.moveTo(p.x + 2.5, p.y);
-      ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2); // Leader 的核更大
-    }
-    ctx.fillStyle = '#ffffff'; // Leader 的核：纯白荧光
-    ctx.fill();
+  init() {
+    this._tc        = document.createElement('canvas');
+    this._tc.width  = canvas.width;
+    this._tc.height = canvas.height;
+    this._tctx      = this._tc.getContext('2d');
+  },
 
-    // 关键一步：为所有活细胞核加上独立微细黑边，从融球滤镜的浆体中强行解耦，使其极易被观测
-    ctx.beginPath();
-    for (const p of ParticleLayer.particles) {
+  update() {
+    const tctx = this._tctx;
+    // 关键优化一：降低衰减率至 0.012，让路径在屏幕上停留数秒之久，形成长效的生成轨迹线
+    tctx.globalCompositeOperation = 'destination-out';
+    tctx.fillStyle = 'rgba(0,0,0,0.012)';
+    tctx.fillRect(0, 0, canvas.width, canvas.height);
+    tctx.globalCompositeOperation = 'source-over';
+
+    // 关键优化二：不再用普通的点，而是绘制线段，线段长度由速度矢量控制，直观捕捉迁移路径
+    tctx.lineWidth = 1.2;
+    for (const p of this.particles) {
       if (p.jammed) continue;
-      const r = p.role === 1 ? 2.5 : 2.0;
-      ctx.moveTo(p.x + r, p.y);
-      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      tctx.beginPath();
+      // 从上一帧位置（基于速度反推）连线到当前位置
+      tctx.moveTo(p.x - p.vx * dt * 1.5, p.y - p.vy * dt * 1.5);
+      tctx.lineTo(p.x, p.y);
+      tctx.strokeStyle = p.color;
+      tctx.stroke();
     }
-    ctx.lineWidth = 0.6;
-    ctx.strokeStyle = '#000000';
-    ctx.stroke();
+  },
+
+  draw() {
+    ctx.globalAlpha = 0.6; // 调高轨迹亮度，使其清晰可见
+    ctx.drawImage(this._tc, 0, 0);
+    ctx.globalAlpha = 1.0;
+  }
+};
+
 // ─── ParticleLayer.update：链表空间哈希斥力 ────────────────────────
 ParticleLayer.update = function() {
   GridLayer.computeGradient();
@@ -360,11 +370,10 @@ ParticleLayer.updateParticleVisual = function(p, gradMag) {
     return;
   }
   const t   = Math.min(gradMag / MAX_GRAD, 1.0);
-  // hue 350(深玫红) → 8(珊瑚橙红)，跨 0° 短弧插值
   const hue = (350 + t * 18) % 360;
-  const sat = 60 + t * 28;    // 60% → 88%
-  const lum = 35 + t * 28;    // 35% → 63%
-  p.radius  = 3.0 + t * 3.0;
+  const sat = 60 + t * 28;    
+  const lum = 35 + t * 28;    
+  p.radius  = 3.2 + t * 2.8; // 细胞大小随活跃度适当增加，便于融球效果展现
   p.color   = `hsl(${hue.toFixed(1)}, ${sat.toFixed(0)}%, ${lum.toFixed(0)}%)`;
 };
 
@@ -376,10 +385,10 @@ const RenderLayer = {
     // 层 1：KPP 密度场热图（皮肤/伤口真实色调）
     this.drawFieldHeatmap();
 
-    // 层 2：细胞迁移轨迹拖尾
+    // 层 2：细胞迁移轨迹拖尾（长效光流路径）
     TrailLayer.draw();
 
-    // 层 3：活跃细胞粒子 → 离屏绘制后整体 blur+contrast metaball 合成
+    // 层 3：活跃细胞粒子 → 离屏绘制后整体 blur + contrast 融合形成黏连的上皮组织细胞浆
     if (!this._oc) {
       this._oc        = document.createElement('canvas');
       this._oc.width  = canvas.width;
@@ -394,21 +403,44 @@ const RenderLayer = {
       this._octx.fillStyle = p.color;
       this._octx.fill();
     }
-    ctx.filter = 'blur(2px) contrast(8)';
+    ctx.filter = 'blur(2.2px) contrast(8.5)';
     ctx.drawImage(this._oc, 0, 0);
-    ctx.filter = 'none';
+    ctx.filter = 'none'; // 重置滤镜，防止污染前景的高清晰细胞核
 
-    // 层 4：细胞核亮点（提升单粒子清晰度，批量同色绘制）
+    // 关键优化三：层 4 — 细胞核亮点解耦重构（强对比度、描边、极高可观测性）
+    // A. 批量绘制 Follower 的细胞核（亮粉色）
+    ctx.beginPath();
+    for (const p of ParticleLayer.particles) {
+      if (p.jammed || p.role === 1) continue;
+      ctx.moveTo(p.x + 1.8, p.y);
+      ctx.arc(p.x, p.y, 1.8, 0, Math.PI * 2);
+    }
+    ctx.fillStyle = '#ffb3c1'; 
+    ctx.fill();
+
+    // B. 批量绘制 Leader 的前线细胞核（更大、纯白荧光）
+    ctx.beginPath();
+    for (const p of ParticleLayer.particles) {
+      if (p.jammed || p.role === 0) continue;
+      ctx.moveTo(p.x + 2.3, p.y);
+      ctx.arc(p.x, p.y, 2.3, 0, Math.PI * 2);
+    }
+    ctx.fillStyle = '#ffffff'; 
+    ctx.fill();
+
+    // C. 统一为所有活细胞核加上高对比度黑色细边缘，从交融的浆液中剥离出来，使其颗颗分明
     ctx.beginPath();
     for (const p of ParticleLayer.particles) {
       if (p.jammed) continue;
-      ctx.moveTo(p.x + 1.1, p.y);
-      ctx.arc(p.x, p.y, 1.1, 0, Math.PI * 2);
+      const r = p.role === 1 ? 2.3 : 1.8;
+      ctx.moveTo(p.x + r, p.y);
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
     }
-    ctx.fillStyle = 'rgba(255, 215, 190, 0.72)';
-    ctx.fill();
+    ctx.lineWidth = 0.6;
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+    ctx.stroke();
 
-    // 层 5：结痂粒子（不经滤镜，保留颗粒质感）
+    // 层 5：结痂粒子（不经滤镜，保留固体颗粒硬质感）
     for (const p of ParticleLayer.particles) {
       if (!p.jammed) continue;
       ctx.beginPath();
@@ -426,13 +458,11 @@ const RenderLayer = {
         const jammed = GRID.jammed[i * W + j];
         let r, g, b;
         if (jammed) {
-          // 结痂：深棕色
           r = 80; g = 42; b = 18;
         } else {
-          // u=0 (伤口暴露真皮): 深暗红  →  u=1 (正常皮肤): 暖粉米色
-          r = Math.floor(88  + u * 118);   // 88  → 206
-          g = Math.floor(14  + u * 128);   // 14  → 142
-          b = Math.floor(18  + u * 92);    // 18  → 110
+          r = Math.floor(88  + u * 118);   
+          g = Math.floor(14  + u * 128);   
+          b = Math.floor(18  + u * 92);    
         }
         for (let dy = 0; dy < CELL_PX; dy++) {
           for (let ddx = 0; ddx < CELL_PX; ddx++) {
