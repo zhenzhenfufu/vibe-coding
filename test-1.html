@@ -5,104 +5,145 @@
     <title>Fisher-KPP 皮肤伤口愈合与结痂混合模拟</title>
     <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19/dist/lil-gui.umd.min.js"></script>
     <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            margin: 0;
-            background-color: #0d0608;
+            background: #0d0608;
             color: #ddc;
             font-family: sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            height: 100vh;
+            min-height: 100vh;
             overflow: hidden;
         }
+        /* ── KPP 公式栏 ── */
+        #formula-bar {
+            display: flex;
+            align-items: baseline;
+            gap: 18px;
+            background: rgba(10,4,8,0.78);
+            border: 1px solid rgba(200,140,100,0.18);
+            border-radius: 8px 8px 0 0;
+            padding: 7px 22px 6px;
+            font-family: 'Georgia', 'Times New Roman', serif;
+            font-size: 15px;
+            color: #f0ddc8;
+            letter-spacing: 0.5px;
+        }
+        #formula-bar .eq  { font-style: italic; font-size: 16px; }
+        #formula-bar .params { font-size: 11px; font-family: monospace; color: #a09080; }
         #canvas-container {
             position: relative;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.7);
-            border-radius: 8px;
-            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.75);
         }
         canvas { display: block; cursor: crosshair; touch-action: none; }
         #info {
-            margin-top: 12px;
-            font-size: 12px;
+            background: rgba(10,4,8,0.55);
+            border-radius: 0 0 8px 8px;
+            padding: 7px 18px 8px;
+            font-size: 11.5px;
             color: #887;
             text-align: center;
             line-height: 1.7;
         }
-        /* ── lil-gui 深色生物实验室主题 ── */
+        /* ── lil-gui 主题 ── */
         .lil-gui {
-            --background-color: rgba(9, 3, 7, 0.91) !important;
-            --title-background-color: #220812 !important;
-            --text-color: #d8ccbb !important;
-            --widget-color: #38101e !important;
+            --background-color: rgba(9,3,7,0.93) !important;
+            --title-background-color: #220810 !important;
+            --text-color: #d8ccba !important;
+            --widget-color: #380e1c !important;
             --hover-color: #58182e !important;
-            --focus-color: #78223e !important;
+            --focus-color: #78203e !important;
             --number-color: #f88060 !important;
             --string-color: #88ccaa !important;
             --font-size: 11px !important;
             --input-font-size: 11px !important;
             --title-font-size: 12px !important;
             --font-family: monospace !important;
+            --width: 234px !important;
         }
-        .lil-gui.root {
-            position: fixed !important;
-            top: 12px !important;
-            right: 12px !important;
-            z-index: 100 !important;
-        }
+        .lil-gui.root { position: fixed !important; top: 12px !important; right: 12px !important; z-index:200 !important; }
+        .lil-gui .disabled { opacity: 0.75 !important; }
     </style>
 </head>
 <body>
+
+<!-- ── 公式栏 ─────────────────────────────────────────────────── -->
+<div id="formula-bar">
+    <span class="eq">∂u/∂t = D∇²u + r·u(1&minus;u)</span>
+    <span class="params">
+        D=<span id="d-val">0.25</span>&ensp;
+        r<sub>eff</sub>=<span id="r-val">0.50</span>&ensp;
+        γ=<span id="g-val">15.0</span>&ensp;
+        c=<span id="c-val">0.71</span>
+        <span style="margin-left:8px;color:#608060">Wave speed c=2√(Dr)</span>
+    </span>
+</div>
+
 <div id="canvas-container">
     <canvas id="simCanvas"></canvas>
 </div>
+
 <div id="info">
-    <strong>Fisher-KPP 皮肤愈合混合模拟 · Active Matter Edition (2026)</strong><br>
-    拖动鼠标划破皮肤 &nbsp;|&nbsp;
-    <span style="color:#f88060">珊瑚红浆</span>：Leader 前线细胞 &nbsp;|&nbsp;
-    <span style="color:#8a2040">深玫浆</span>：Follower 跟随细胞 &nbsp;|&nbsp;
-    <span style="color:#eee">白核</span>：细胞核（颗颗可数）&nbsp;|&nbsp; 棕褐：干燥结痂
+    <strong>Fisher-KPP 皮肤愈合 · Active Matter + Biological Cascade (2026)</strong>
+    &nbsp;|&nbsp; 拖动鼠标划破皮肤
+    &nbsp;|&nbsp; <span style="color:#f88060">珊瑚红</span> Leader
+    &nbsp;|&nbsp; <span style="color:#8a2040">深玫</span> Follower
+    &nbsp;|&nbsp; <span style="color:#eee">●</span> 细胞核（颗颗可数）
+    &nbsp;|&nbsp; 棕褐 结痂
 </div>
 
 <script>
-// ════════════════════════════════════════════════════════════════════
-// 可调参数对象 — lil-gui 直接写入此对象，运行时实时读取
-// ════════════════════════════════════════════════════════════════════
+'use strict';
+// ══════════════════════════════════════════════════════════════════
+// §1  可调参数 P — lil-gui 直接写入，实时读取
+// ══════════════════════════════════════════════════════════════════
 const P = {
-  GAMMA:       15.0,   // 梯度趋化驱动力
-  MU:           3.0,   // 基底牵引摩擦
-  K_REPEL:      5.0,   // 细胞体积排斥系数
-  K_ALIGN:      2.5,   // Vicsek 集群速度对齐系数
-  BASE_RADIUS:  2.8,   // 细胞核基础半径（px）
-  NOISE:       0.18,   // 布朗热噪声强度
+  GAMMA:       15.0,
+  MU:           3.0,
+  K_REPEL:      5.0,
+  K_ALIGN:      2.5,
+  BASE_RADIUS:  2.8,
+  NOISE:        0.18,
+  D_MULT:       1.0,   // 扩散系数倍率
+  R_MULT:       1.0,   // 增殖率倍率
 };
-const MAX_SPEED = 28.0;   // 速度硬上限（防数值爆炸）
+const MAX_SPEED = 28.0;
 const N_PARTICLES = 12000;
 
-// ════════════════════════════════════════════════════════════════════
-// 固定仿真常量
-// ════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+// §2  对照组预设（4 组）
+// ══════════════════════════════════════════════════════════════════
+const PRESETS = {
+  'Control (Baseline)':   { GAMMA:15, MU:3.0, K_REPEL:5.0, K_ALIGN:2.5, BASE_RADIUS:2.8, NOISE:0.18, D_MULT:1.00, R_MULT:1.00 },
+  'Impaired (糖尿病)':     { GAMMA: 7, MU:5.0, K_REPEL:6.5, K_ALIGN:1.2, BASE_RADIUS:2.3, NOISE:0.42, D_MULT:0.42, R_MULT:0.35 },
+  'Enhanced (GF治疗)':    { GAMMA:22, MU:2.6, K_REPEL:4.5, K_ALIGN:3.2, BASE_RADIUS:3.1, NOISE:0.10, D_MULT:1.00, R_MULT:2.20 },
+  'Inflamed (过度炎症)':   { GAMMA:42, MU:1.8, K_REPEL:3.2, K_ALIGN:6.0, BASE_RADIUS:3.4, NOISE:0.55, D_MULT:1.40, R_MULT:1.10 },
+};
+
+// ══════════════════════════════════════════════════════════════════
+// §3  仿真常量
+// ══════════════════════════════════════════════════════════════════
 const W = 256, H = 256, CELL_PX = 3;
 const dx = 4.0, dt = 0.08, SUBSTEPS = 2;
 const D_NORMAL = 0.25, R_NORMAL = 0.5;
 const LEADER_THRESHOLD  = 0.04;
 const JAMMING_THRESHOLD = 0.97;
 const MAX_GRAD = 0.12;
+const CW = W * CELL_PX, CH = H * CELL_PX;   // 768 × 768
 
-// ════════════════════════════════════════════════════════════════════
-// Canvas 初始化
-// ════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+// §4  Canvas
+// ══════════════════════════════════════════════════════════════════
 const canvas = document.getElementById('simCanvas');
 const ctx    = canvas.getContext('2d');
-canvas.width  = W * CELL_PX;   // 768
-canvas.height = H * CELL_PX;   // 768
-const CW = canvas.width, CH = canvas.height;
+canvas.width  = CW;
+canvas.height = CH;
 
-// ════════════════════════════════════════════════════════════════════
-// 网格数据（KPP 场）
-// ════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+// §5  KPP 场数据
+// ══════════════════════════════════════════════════════════════════
 const GRID = {
   u:      new Float32Array(W * H),
   uNew:   new Float32Array(W * H),
@@ -113,220 +154,176 @@ const GRID = {
   gradY:  new Float32Array(W * H),
 };
 
-// ════════════════════════════════════════════════════════════════════
-// 粒子存储（Particle 对象数组，V8 形状稳定）
-// ════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+// §6  生物级联 ODE（移植自 wound_model.py：Fibrin→Macro→TGF-β→Fibro→Collagen）
+//     1 sim-unit = 0.06 天 = 1.44 小时（标定至 KPP 波速）
+// ══════════════════════════════════════════════════════════════════
+const BIO = {
+  fibrin:   1.0,
+  macro:    0.0,
+  tgf:      0.0,
+  fibro:    0.0,
+  collagen: 0.0,
+  phase:    'I · Hemostasis',
+  woundPct: 0,
+  day:      0,
+};
+
+// lil-gui 只读显示用（通过 .listen() 刷新）
+const bioDisp = { fibrin:1.0, macro:0, tgf:0, fibro:0, collagen:0 };
+
+function updateBioCascade() {
+  // dt_bio 对应每帧推进的生物天数
+  const dt_bio = SUBSTEPS * dt * 0.060;
+  BIO.day += dt_bio;
+
+  // — Fibrin：被巨噬酶降解
+  BIO.fibrin  += (-0.12 * BIO.fibrin * (0.1 + BIO.macro) - 0.005 * BIO.fibrin) * dt_bio;
+  BIO.fibrin   = Math.max(0, BIO.fibrin);
+
+  // — Macrophage：由 fibrin 招募，自限性
+  BIO.macro   += (1.8 * BIO.fibrin - 0.75 * BIO.macro) * dt_bio;
+  BIO.macro    = Math.max(0, Math.min(1, BIO.macro));
+
+  // — TGF-β：由巨噬细胞和 fibrin 产生
+  BIO.tgf     += (2.0 * BIO.macro + 0.25 * BIO.fibrin - 0.85 * BIO.tgf) * dt_bio;
+  BIO.tgf      = Math.max(0, Math.min(1, BIO.tgf));
+
+  // — Fibroblast：TGF-β 驱动迁移增殖，空间饱和
+  BIO.fibro   += (1.1 * BIO.tgf * (1 - BIO.fibro) - 0.4 * BIO.fibro) * dt_bio;
+  BIO.fibro    = Math.max(0, Math.min(1, BIO.fibro));
+
+  // — Collagen：Fibroblast × TGF-β 合成，缓慢成熟
+  BIO.collagen += (0.7 * BIO.fibro * BIO.tgf - 0.07 * BIO.collagen) * dt_bio;
+  BIO.collagen = Math.max(0, Math.min(1, BIO.collagen));
+
+  // 阶段判断
+  if      (BIO.day < 1.5) BIO.phase = 'I · Hemostasis (止血)';
+  else if (BIO.day < 4.0) BIO.phase = 'II · Inflammation (炎症)';
+  else if (BIO.day < 12)  BIO.phase = 'III · Proliferation (增殖)';
+  else                    BIO.phase = 'IV · Remodeling (重塑)';
+
+  // 生物级联驱动 KPP 增殖率 r（伤口区）
+  // Fibroblast 和 TGF-β 共同推高 r → 后期波前加速 → 白色细胞完全结痂
+  const r_bio = R_NORMAL * P.R_MULT
+              * (0.25 + 2.2 * BIO.fibro + 0.8 * BIO.tgf + 0.3 * (1 - BIO.fibrin));
+  const r_capped = Math.min(r_bio, 2.0);
+  for (let k = 0; k < GRID.r.length; k++) {
+    if (!GRID.jammed[k] && GRID.u[k] < 0.98) GRID.r[k] = r_capped;
+  }
+
+  // 计算伤口愈合百分比（每帧，伤口区 = 中心圆 r0=42）
+  const cx = W/2, cy = H/2, r0 = 42;
+  let total = 0, healed = 0;
+  for (let i = (cy-r0)|0; i <= (cy+r0)|0; i++) {
+    for (let j = (cx-r0)|0; j <= (cx+r0)|0; j++) {
+      if (i<0||i>=H||j<0||j>=W) continue;
+      if (Math.hypot(i-cy, j-cx) > r0) continue;
+      total++;
+      const idx = i*W+j;
+      if (GRID.jammed[idx] || GRID.u[idx] >= JAMMING_THRESHOLD) healed++;
+    }
+  }
+  BIO.woundPct = total > 0 ? healed/total*100 : 0;
+
+  // 同步到 lil-gui 显示对象
+  bioDisp.fibrin   = +BIO.fibrin.toFixed(3);
+  bioDisp.macro    = +BIO.macro.toFixed(3);
+  bioDisp.tgf      = +BIO.tgf.toFixed(3);
+  bioDisp.fibro    = +BIO.fibro.toFixed(3);
+  bioDisp.collagen = +BIO.collagen.toFixed(3);
+}
+
+// ══════════════════════════════════════════════════════════════════
+// §7  计时器与 FPS
+// ══════════════════════════════════════════════════════════════════
+let simTime  = 0;
+let fps = 0, _fc = 0, _ft = performance.now();
+
+// ══════════════════════════════════════════════════════════════════
+// §8  空间哈希（预分配，避免每帧 GC）
+// ══════════════════════════════════════════════════════════════════
+const SG_SZ  = 6.0;
+const SG_W   = Math.ceil(CW / SG_SZ) + 2;
+const SG_H   = Math.ceil(CH / SG_SZ) + 2;
+const _sgHead = new Int32Array(SG_W * SG_H);
+const _sgNext = new Int32Array(N_PARTICLES);
+const ALIGN_R2 = (SG_SZ * 3) * (SG_SZ * 3);
+const REPEL_R  = SG_SZ, REPEL_R2 = REPEL_R * REPEL_R;
+
+// ══════════════════════════════════════════════════════════════════
+// §9  粒子
+// ══════════════════════════════════════════════════════════════════
 class Particle {
   constructor(x, y) {
-    this.x = x;  this.y = y;
+    this.x = x; this.y = y;
     this.vx = 0; this.vy = 0;
     this.jammed = false;
     this.homeX = x; this.homeY = y;
-    this.role = 0;        // 0 = follower, 1 = leader
-    this.radius = 2.8;
+    this.role = 0;
+    this.radius = P.BASE_RADIUS;
   }
 }
 
-// ════════════════════════════════════════════════════════════════════
-// 空间哈希：预分配，避免每帧 GC（关键性能优化）
-// ════════════════════════════════════════════════════════════════════
-const SG_SZ = 6.0;
-const SG_W  = Math.ceil(CW / SG_SZ) + 2;   // 130
-const SG_H  = Math.ceil(CH / SG_SZ) + 2;   // 130
-const _sgHead = new Int32Array(SG_W * SG_H);   // 头节点
-const _sgNext = new Int32Array(N_PARTICLES);   // 链表 next
-
-// 对齐半径²（3 格 × SG_SZ = 18px，Vicsek 邻域）
-const ALIGN_R2 = (SG_SZ * 3) * (SG_SZ * 3);
-const REPEL_R  = SG_SZ;
-const REPEL_R2 = REPEL_R * REPEL_R;
-
-// ════════════════════════════════════════════════════════════════════
-// 双线性插值（场梯度采样）
-// ════════════════════════════════════════════════════════════════════
-function bilinearSample(field, px, py) {
-  const gx = px / CELL_PX, gy = py / CELL_PX;
-  const j0 = gx | 0, i0 = gy | 0;
-  const j1 = j0 + 1, i1 = i0 + 1;
-  if (i0 < 0 || i1 >= H || j0 < 0 || j1 >= W) return 0;
-  const fx = gx - j0, fy = gy - i0;
-  return (1-fx)*(1-fy)*field[i0*W+j0] + fx*(1-fy)*field[i0*W+j1]
-       + (1-fx)*   fy *field[i1*W+j0] + fx*   fy *field[i1*W+j1];
-}
-
-// ════════════════════════════════════════════════════════════════════
-// 空间位置哈希噪声（伤口边缘锯齿化）
-// ════════════════════════════════════════════════════════════════════
-function cellNoise(ni, nj) {
-  return Math.abs(Math.sin(ni * 127.1 + nj * 311.7) * 43758.5453) % 1.0;
-}
-
-// ════════════════════════════════════════════════════════════════════
-// GridLayer — Fisher-KPP 求解器
-// ════════════════════════════════════════════════════════════════════
-const GridLayer = {
-  init() {
-    GRID.u.fill(1.0);
-    GRID.D.fill(D_NORMAL);
-    GRID.r.fill(R_NORMAL);
-    GRID.jammed.fill(0);
-    // 多频正弦扰动 → 不规则初始伤口
-    const cx = W/2, cy = H/2, r0 = 35;
-    for (let i = 0; i < H; i++) {
-      for (let j = 0; j < W; j++) {
-        const dy = i - cy, dj = j - cx;
-        const ang = Math.atan2(dy, dj), dist = Math.hypot(dy, dj);
-        const irregR = r0 * (1
-          + 0.22 * Math.sin(3  * ang + 0.5)
-          + 0.14 * Math.sin(7  * ang + 1.8)
-          + 0.09 * Math.sin(13 * ang + 3.1));
-        if (dist < irregR) GRID.u[i*W+j] = 0.0;
-      }
-    }
-  },
-
-  applyWound(px, py, radius) {
-    const ci = py / CELL_PX | 0;
-    const cj = px / CELL_PX | 0;
-    const R  = Math.ceil(radius / CELL_PX);
-    const R2 = R * R;
-    for (let di = -R; di <= R; di++) {
-      for (let dj = -R; dj <= R; dj++) {
-        const ni = ci+di, nj = cj+dj;
-        if (ni<0||ni>=H||nj<0||nj>=W) continue;
-        const d2 = di*di + dj*dj;
-        if (d2 > R2) continue;
-        if (d2 > R2*0.42 && cellNoise(ni,nj) > 0.58) continue;
-        const idx = ni*W+nj;
-        GRID.u[idx]=0; GRID.jammed[idx]=0; GRID.D[idx]=D_NORMAL; GRID.r[idx]=R_NORMAL;
-      }
-    }
-    const pts = ParticleLayer.particles;
-    for (let i=0; i<pts.length; i++) {
-      const p = pts[i];
-      if (Math.hypot((p.y/CELL_PX|0)-ci, (p.x/CELL_PX|0)-cj) <= R) p.jammed = false;
-    }
-  },
-
-  solve() {
-    const { u, uNew, D, r } = GRID;
-    const dx2 = dx * dx;
-    for (let i = 1; i < H-1; i++) {
-      for (let j = 1; j < W-1; j++) {
-        const idx = i*W+j;
-        if (GRID.jammed[idx]) { uNew[idx]=u[idx]; continue; }
-        const lap = (u[(i-1)*W+j]+u[(i+1)*W+j]+u[i*W+(j-1)]+u[i*W+(j+1)] - 4*u[idx]) / dx2;
-        const ui = u[idx];
-        uNew[idx] = Math.max(0, Math.min(1, ui + dt*(D[idx]*lap + r[idx]*ui*(1-ui))));
-      }
-    }
-    for (let k=0; k<u.length; k++) u[k]=uNew[k];
-    // Neumann BC（零通量边界）
-    for (let j=0;j<W;j++) { GRID.u[j]=GRID.u[W+j]; GRID.u[(H-1)*W+j]=GRID.u[(H-2)*W+j]; }
-    for (let i=0;i<H;i++) { GRID.u[i*W]=GRID.u[i*W+1]; GRID.u[i*W+W-1]=GRID.u[i*W+W-2]; }
-  },
-
-  computeGradient() {
-    const u = GRID.u;
-    const inv = 1 / (2*dx);
-    for (let i=1;i<H-1;i++) {
-      for (let j=1;j<W-1;j++) {
-        const idx=i*W+j;
-        GRID.gradX[idx]=(u[i*W+(j+1)]-u[i*W+(j-1)])*inv;
-        GRID.gradY[idx]=(u[(i+1)*W+j]-u[(i-1)*W+j])*inv;
-      }
-    }
-  },
-
-  // O(W×H + N_particles)：收集全部新结痂格，一次性扫描粒子
-  detectPhase() {
-    const jSet = new Set();
-    for (let i=0;i<H;i++) {
-      for (let j=0;j<W;j++) {
-        const idx=i*W+j;
-        if (!GRID.jammed[idx] && GRID.u[idx] >= JAMMING_THRESHOLD) {
-          GRID.jammed[idx]=1; GRID.D[idx]=0; GRID.r[idx]=0; GRID.u[idx]=1;
-          jSet.add(idx);
-        }
-      }
-    }
-    if (jSet.size > 0) {
-      const pts = ParticleLayer.particles;
-      for (let i=0;i<pts.length;i++) {
-        const p = pts[i];
-        if (p.jammed) continue;
-        const key = (p.y/CELL_PX|0)*W + (p.x/CELL_PX|0);
-        if (jSet.has(key)) { p.jammed=true; p.homeX=p.x; p.homeY=p.y; p.vx=p.vy=0; }
-      }
-    }
-  }
-};
-
-// ════════════════════════════════════════════════════════════════════
-// ParticleLayer — 12000 粒子 Active Matter 动力学
-// ════════════════════════════════════════════════════════════════════
 const ParticleLayer = {
   particles: [],
 
   init(n) {
     this.particles = [];
-    for (let i=0; i<n; i++) {
+    for (let i=0; i<n; i++)
       this.particles.push(new Particle(Math.random()*CW, Math.random()*CH));
+  },
+
+  // 批量结痂：O(N) 单次扫描
+  jamInCells(jSet) {
+    const pts = this.particles;
+    for (let i=0; i<pts.length; i++) {
+      const p = pts[i];
+      if (p.jammed) continue;
+      const k = (p.y/CELL_PX|0)*W + (p.x/CELL_PX|0);
+      if (jSet.has(k)) { p.jammed=true; p.homeX=p.x; p.homeY=p.y; p.vx=p.vy=0; }
     }
   },
 
   update() {
     GridLayer.computeGradient();
-
     const pts = this.particles;
-    const N   = pts.length;
+    const N = pts.length;
+    const TWO_PI = Math.PI * 2;
 
-    // ── 重建空间哈希（TypedArray.fill 是原生操作，极快）────────────
+    // 重建空间哈希
     _sgHead.fill(-1);
     for (let i=0; i<N; i++) {
       const p = pts[i];
       if (p.jammed) continue;
       const key = (p.y/SG_SZ|0)*SG_W + (p.x/SG_SZ|0);
-      if (key >= 0 && key < _sgHead.length) {
-        _sgNext[i] = _sgHead[key];
-        _sgHead[key] = i;
-      }
+      if (key >= 0 && key < _sgHead.length) { _sgNext[i]=_sgHead[key]; _sgHead[key]=i; }
     }
-
-    const TWO_PI = Math.PI * 2;
 
     for (let i=0; i<N; i++) {
       const p = pts[i];
 
-      // ── 结痂粒子：微小热振动，锁定位置 ──────────────────────────
       if (p.jammed) {
         p.x = p.homeX + (Math.random()-0.5)*0.22;
         p.y = p.homeY + (Math.random()-0.5)*0.22;
         continue;
       }
 
-      // ── 趋化驱动：双线性插值梯度 ─────────────────────────────────
+      // 梯度采样
       const gx = bilinearSample(GRID.gradX, p.x, p.y);
       const gy = bilinearSample(GRID.gradY, p.x, p.y);
 
-      // F_active = -γ∇u（梯度反向 = 朝伤口低密度区迁移）
-      let fx = -P.GAMMA * gx;
-      let fy = -P.GAMMA * gy;
+      let fx = -P.GAMMA * gx - P.MU * p.vx;
+      let fy = -P.GAMMA * gy - P.MU * p.vy;
 
-      // 牵引摩擦
-      fx -= P.MU * p.vx;
-      fy -= P.MU * p.vy;
-
-      // 布朗噪声
+      // 布朗噪声（Box-Muller 近似方向均匀）
       const na = Math.random() * TWO_PI;
-      const nm = (Math.random() + Math.random()) * P.NOISE;   // Gaussian 近似
-      fx += Math.cos(na) * nm;
-      fy += Math.sin(na) * nm;
+      const nm = (Math.random()+Math.random()) * P.NOISE;
+      fx += Math.cos(na)*nm; fy += Math.sin(na)*nm;
 
-      // ── 邻居搜索：体积排斥 + Vicsek 速度对齐（一次遍历）────────
-      let fx_r=0, fy_r=0, sumVx=0, sumVy=0, nAlgn=0;
-      const gi = p.y/SG_SZ|0, gj = p.x/SG_SZ|0;
-
+      // 邻居：体积排斥 + Vicsek 对齐（一次遍历）
+      let frx=0, fry=0, svx=0, svy=0, na2=0;
+      const gi=p.y/SG_SZ|0, gj=p.x/SG_SZ|0;
       for (let di=-2; di<=2; di++) {
         for (let dj=-2; dj<=2; dj++) {
           const ni=gi+di, nj=gj+dj;
@@ -334,309 +331,370 @@ const ParticleLayer = {
           let qi = _sgHead[ni*SG_W+nj];
           while (qi !== -1) {
             if (qi !== i) {
-              const q   = pts[qi];
-              const ddx = p.x-q.x, ddy = p.y-q.y;
-              const d2  = ddx*ddx + ddy*ddy;
+              const q=pts[qi];
+              const ddx=p.x-q.x, ddy=p.y-q.y;
+              const d2=ddx*ddx+ddy*ddy;
               if (d2 > 0) {
-                // 体积排斥（短程）
                 if (d2 < REPEL_R2) {
-                  const d = Math.sqrt(d2);
-                  const mag = P.K_REPEL * (REPEL_R - d) / d;
-                  fx_r += mag*ddx; fy_r += mag*ddy;
+                  const mag = P.K_REPEL*(REPEL_R-Math.sqrt(d2))/Math.sqrt(d2);
+                  frx+=mag*ddx; fry+=mag*ddy;
                 }
-                // Vicsek 速度对齐（中程）
-                if (d2 < ALIGN_R2) {
-                  sumVx += q.vx; sumVy += q.vy; nAlgn++;
-                }
+                if (d2 < ALIGN_R2) { svx+=q.vx; svy+=q.vy; na2++; }
               }
             }
             qi = _sgNext[qi];
           }
         }
       }
+      fx += frx; fy += fry;
+      if (na2 > 0) { const inv=1/na2; fx+=P.K_ALIGN*(svx*inv-p.vx); fy+=P.K_ALIGN*(svy*inv-p.vy); }
 
-      fx += fx_r;
-      fy += fy_r;
+      // 欧拉积分
+      p.vx += fx*dt; p.vy += fy*dt;
+      const spd2=p.vx*p.vx+p.vy*p.vy;
+      if (spd2 > MAX_SPEED*MAX_SPEED) { const inv=MAX_SPEED/Math.sqrt(spd2); p.vx*=inv; p.vy*=inv; }
+      p.x += p.vx*dt; p.y += p.vy*dt;
 
-      // Vicsek 对齐力：与邻居平均速度靠拢
-      if (nAlgn > 0) {
-        const invN = 1 / nAlgn;
-        fx += P.K_ALIGN * (sumVx*invN - p.vx);
-        fy += P.K_ALIGN * (sumVy*invN - p.vy);
-      }
+      // 边界弹射
+      if (p.x<0){p.x=0;p.vx=Math.abs(p.vx);}
+      if (p.x>CW){p.x=CW;p.vx=-Math.abs(p.vx);}
+      if (p.y<0){p.y=0;p.vy=Math.abs(p.vy);}
+      if (p.y>CH){p.y=CH;p.vy=-Math.abs(p.vy);}
 
-      // ── 欧拉积分 ────────────────────────────────────────────────
-      p.vx += fx * dt;
-      p.vy += fy * dt;
-
-      // 速度防爆限幅（数值稳定核心保障）
-      const spd2 = p.vx*p.vx + p.vy*p.vy;
-      if (spd2 > MAX_SPEED*MAX_SPEED) {
-        const inv = MAX_SPEED / Math.sqrt(spd2);
-        p.vx *= inv; p.vy *= inv;
-      }
-
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-
-      // 边界弹性反弹
-      if (p.x < 0)  { p.x = 0;  p.vx =  Math.abs(p.vx); }
-      if (p.x > CW) { p.x = CW; p.vx = -Math.abs(p.vx); }
-      if (p.y < 0)  { p.y = 0;  p.vy =  Math.abs(p.vy); }
-      if (p.y > CH) { p.y = CH; p.vy = -Math.abs(p.vy); }
-
-      // 角色判定 + 半径
-      const gm = Math.hypot(gx, gy);
+      // 角色 & 半径
+      const gm = Math.hypot(gx,gy);
       p.role   = gm > LEADER_THRESHOLD ? 1 : 0;
-      p.radius = P.BASE_RADIUS * (1 + Math.min(gm/MAX_GRAD, 1.0));
+      p.radius = P.BASE_RADIUS * (1 + Math.min(gm/MAX_GRAD,1.0));
+
+      // ★ 关键修复：游入已结痂格的活跃粒子同步结痂
+      const ck = (p.y/CELL_PX|0)*W + (p.x/CELL_PX|0);
+      if (ck>=0 && ck<GRID.jammed.length && GRID.jammed[ck]) {
+        p.jammed=true; p.homeX=p.x; p.homeY=p.y; p.vx=p.vy=0;
+      }
     }
   }
 };
 
-// ════════════════════════════════════════════════════════════════════
-// TrailLayer — 拖尾（批量绘制，避免 12000 次单独 fill）
-// ════════════════════════════════════════════════════════════════════
-const TrailLayer = {
-  _tc: null, _tctx: null,
+// ══════════════════════════════════════════════════════════════════
+// §10  双线性插值
+// ══════════════════════════════════════════════════════════════════
+function bilinearSample(field, px, py) {
+  const gx=px/CELL_PX, gy=py/CELL_PX;
+  const j0=gx|0, i0=gy|0, j1=j0+1, i1=i0+1;
+  if (i0<0||i1>=H||j0<0||j1>=W) return 0;
+  const fx=gx-j0, fy=gy-i0;
+  return (1-fx)*(1-fy)*field[i0*W+j0]+fx*(1-fy)*field[i0*W+j1]
+       +(1-fx)*   fy  *field[i1*W+j0]+fx*   fy  *field[i1*W+j1];
+}
+
+// ══════════════════════════════════════════════════════════════════
+// §11  GridLayer — Fisher-KPP 求解器
+// ══════════════════════════════════════════════════════════════════
+function cellNoise(ni,nj){ return Math.abs(Math.sin(ni*127.1+nj*311.7)*43758.5453)%1; }
+
+const GridLayer = {
   init() {
-    this._tc = document.createElement('canvas');
-    this._tc.width = CW; this._tc.height = CH;
-    this._tctx = this._tc.getContext('2d');
+    GRID.u.fill(1.0); GRID.D.fill(D_NORMAL); GRID.r.fill(R_NORMAL); GRID.jammed.fill(0);
+    const cx=W/2, cy=H/2, r0=35;
+    for (let i=0;i<H;i++) for (let j=0;j<W;j++) {
+      const dy=i-cy, dj=j-cx, ang=Math.atan2(dy,dj), dist=Math.hypot(dy,dj);
+      const ir=r0*(1+0.22*Math.sin(3*ang+0.5)+0.14*Math.sin(7*ang+1.8)+0.09*Math.sin(13*ang+3.1));
+      if (dist<ir) GRID.u[i*W+j]=0;
+    }
+  },
+
+  applyWound(px,py,radius) {
+    const ci=py/CELL_PX|0, cj=px/CELL_PX|0, R=Math.ceil(radius/CELL_PX), R2=R*R;
+    for (let di=-R;di<=R;di++) for (let dj=-R;dj<=R;dj++) {
+      const ni=ci+di, nj=cj+dj;
+      if (ni<0||ni>=H||nj<0||nj>=W) continue;
+      const d2=di*di+dj*dj;
+      if (d2>R2) continue;
+      if (d2>R2*0.42 && cellNoise(ni,nj)>0.58) continue;
+      const k=ni*W+nj; GRID.u[k]=0; GRID.jammed[k]=0; GRID.D[k]=D_NORMAL; GRID.r[k]=R_NORMAL;
+    }
+    const pts=ParticleLayer.particles;
+    for (let i=0;i<pts.length;i++) {
+      const p=pts[i];
+      if (Math.hypot((p.y/CELL_PX|0)-ci,(p.x/CELL_PX|0)-cj)<=R) p.jammed=false;
+    }
+  },
+
+  solve() {
+    const {u,uNew,D,r}=GRID, dx2=dx*dx;
+    const dm=P.D_MULT;   // 扩散倍率（预设切换时立即生效）
+    for (let i=1;i<H-1;i++) for (let j=1;j<W-1;j++) {
+      const idx=i*W+j;
+      if (GRID.jammed[idx]){uNew[idx]=u[idx];continue;}
+      const lap=(u[(i-1)*W+j]+u[(i+1)*W+j]+u[i*W+(j-1)]+u[i*W+(j+1)]-4*u[idx])/dx2;
+      const ui=u[idx];
+      // r[idx] 已由 updateBioCascade 根据 P.R_MULT 和生物级联设置
+      uNew[idx]=Math.max(0,Math.min(1, ui+dt*(D[idx]*dm*lap + r[idx]*ui*(1-ui))));
+    }
+    for (let k=0;k<u.length;k++) u[k]=uNew[k];
+    // Neumann BC
+    for (let j=0;j<W;j++){GRID.u[j]=GRID.u[W+j];GRID.u[(H-1)*W+j]=GRID.u[(H-2)*W+j];}
+    for (let i=0;i<H;i++){GRID.u[i*W]=GRID.u[i*W+1];GRID.u[i*W+W-1]=GRID.u[i*W+W-2];}
+  },
+
+  computeGradient() {
+    const u=GRID.u, inv=1/(2*dx);
+    for (let i=1;i<H-1;i++) for (let j=1;j<W-1;j++) {
+      const idx=i*W+j;
+      GRID.gradX[idx]=(u[i*W+(j+1)]-u[i*W+(j-1)])*inv;
+      GRID.gradY[idx]=(u[(i+1)*W+j]-u[(i-1)*W+j])*inv;
+    }
+  },
+
+  // O(W×H + N)：批量收集结痂格，单次扫描粒子
+  detectPhase() {
+    const jSet=new Set();
+    for (let i=0;i<H;i++) for (let j=0;j<W;j++) {
+      const idx=i*W+j;
+      if (!GRID.jammed[idx] && GRID.u[idx]>=JAMMING_THRESHOLD) {
+        GRID.jammed[idx]=1; GRID.D[idx]=0; GRID.r[idx]=0; GRID.u[idx]=1; jSet.add(idx);
+      }
+    }
+    if (jSet.size>0) ParticleLayer.jamInCells(jSet);
+  }
+};
+
+// ══════════════════════════════════════════════════════════════════
+// §12  TrailLayer（批量绘制，2 path 替代 12000 次 fill）
+// ══════════════════════════════════════════════════════════════════
+const TrailLayer = {
+  _tc:null, _tctx:null,
+  init() {
+    this._tc=document.createElement('canvas');
+    this._tc.width=CW; this._tc.height=CH;
+    this._tctx=this._tc.getContext('2d');
   },
   update() {
-    const tctx = this._tctx;
-    // 逐帧衰减 6%
-    tctx.globalCompositeOperation = 'destination-out';
-    tctx.fillStyle = 'rgba(0,0,0,0.06)';
-    tctx.fillRect(0, 0, CW, CH);
-    tctx.globalCompositeOperation = 'source-over';
-
-    const pts = ParticleLayer.particles;
-    const R_T = P.BASE_RADIUS * 0.22;
-
-    // Leader 拖尾（批量 path）
-    tctx.fillStyle = 'rgba(248,120,70,0.42)';
+    const tctx=this._tctx;
+    tctx.globalCompositeOperation='destination-out';
+    tctx.fillStyle='rgba(0,0,0,0.06)';
+    tctx.fillRect(0,0,CW,CH);
+    tctx.globalCompositeOperation='source-over';
+    const pts=ParticleLayer.particles, rt=P.BASE_RADIUS*0.22;
+    tctx.fillStyle='rgba(248,120,70,0.42)';
     tctx.beginPath();
-    for (let i=0; i<pts.length; i++) {
-      const p = pts[i];
-      if (p.jammed || p.role !== 1) continue;
-      tctx.moveTo(p.x + R_T, p.y);
-      tctx.arc(p.x, p.y, R_T, 0, Math.PI*2);
-    }
+    for (let i=0;i<pts.length;i++){const p=pts[i];if(p.jammed||p.role!==1)continue;tctx.moveTo(p.x+rt,p.y);tctx.arc(p.x,p.y,rt,0,Math.PI*2);}
     tctx.fill();
-
-    // Follower 拖尾（批量 path）
-    tctx.fillStyle = 'rgba(138,20,56,0.35)';
+    tctx.fillStyle='rgba(138,20,56,0.32)';
     tctx.beginPath();
-    for (let i=0; i<pts.length; i++) {
-      const p = pts[i];
-      if (p.jammed || p.role !== 0) continue;
-      tctx.moveTo(p.x + R_T, p.y);
-      tctx.arc(p.x, p.y, R_T, 0, Math.PI*2);
-    }
+    for (let i=0;i<pts.length;i++){const p=pts[i];if(p.jammed||p.role!==0)continue;tctx.moveTo(p.x+rt,p.y);tctx.arc(p.x,p.y,rt,0,Math.PI*2);}
     tctx.fill();
   },
   draw() {
-    ctx.globalAlpha = 0.42;
-    ctx.drawImage(this._tc, 0, 0);
-    ctx.globalAlpha = 1.0;
+    ctx.globalAlpha=0.42;
+    ctx.drawImage(this._tc,0,0);
+    ctx.globalAlpha=1.0;
   }
 };
 
-// ════════════════════════════════════════════════════════════════════
-// RenderLayer — 『浆融核分』分层渲染架构
-//
-//  浆层：离屏大圆 → blur+contrast metaball → 细胞相互融合
-//  核层：离屏小硬圆 → 纯白填充 + 黑描边 → 颗颗分明
-// ════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+// §13  RenderLayer — 浆融核分 + HUD
+// ══════════════════════════════════════════════════════════════════
 const RenderLayer = {
-  _ocPlasma: null, _opCtx: null,   // 浆层离屏
-  _ocNuclei: null, _onCtx: null,   // 核层离屏
+  _ocPlasma:null, _opCtx:null,
+  _ocNuclei:null, _onCtx:null,
 
   _init() {
     if (this._ocPlasma) return;
-    const mk = () => {
-      const c = document.createElement('canvas');
-      c.width = CW; c.height = CH;
-      return [c, c.getContext('2d')];
-    };
-    [this._ocPlasma, this._opCtx] = mk();
-    [this._ocNuclei, this._onCtx] = mk();
+    const mk=()=>{const c=document.createElement('canvas');c.width=CW;c.height=CH;return[c,c.getContext('2d')];};
+    [this._ocPlasma,this._opCtx]=mk();
+    [this._ocNuclei,this._onCtx]=mk();
   },
 
   draw() {
     this._init();
-    ctx.clearRect(0, 0, CW, CH);
-
-    // ── 层 1：KPP 密度场热力图 ─────────────────────────────────────
+    ctx.clearRect(0,0,CW,CH);
     this._drawHeatmap();
-
-    // ── 层 2：迁移拖尾 ─────────────────────────────────────────────
     TrailLayer.draw();
 
-    // ── 层 3：浆层（metaball 融球）─────────────────────────────────
-    // 大半径圆（BASE_RADIUS × 3.2）在离屏绘制，邻近细胞浆融合
-    const op = this._opCtx;
-    op.clearRect(0, 0, CW, CH);
+    // ── 浆层（metaball fusion）────────────────────────────────────
+    const op=this._opCtx;
+    op.clearRect(0,0,CW,CH);
+    const pts=ParticleLayer.particles;
+    const PR=P.BASE_RADIUS;
 
-    const pts = ParticleLayer.particles;
-    const PR  = P.BASE_RADIUS;
-
-    // Leader 浆（珊瑚橙红）
-    op.fillStyle = '#e8603a';
+    op.fillStyle='#e8603a';
     op.beginPath();
-    for (let i=0; i<pts.length; i++) {
-      const p = pts[i];
-      if (p.jammed || p.role !== 1) continue;
-      const r = p.radius * 3.0;
-      op.moveTo(p.x + r, p.y);
-      op.arc(p.x, p.y, r, 0, Math.PI*2);
-    }
+    for (let i=0;i<pts.length;i++){const p=pts[i];if(p.jammed||p.role!==1)continue;const r=p.radius*3.0;op.moveTo(p.x+r,p.y);op.arc(p.x,p.y,r,0,Math.PI*2);}
     op.fill();
 
-    // Follower 浆（深玫瑰）
-    op.fillStyle = '#781436';
+    op.fillStyle='#781436';
     op.beginPath();
-    for (let i=0; i<pts.length; i++) {
-      const p = pts[i];
-      if (p.jammed || p.role !== 0) continue;
-      const r = PR * 3.0;
-      op.moveTo(p.x + r, p.y);
-      op.arc(p.x, p.y, r, 0, Math.PI*2);
-    }
+    for (let i=0;i<pts.length;i++){const p=pts[i];if(p.jammed||p.role!==0)continue;const r=PR*3.0;op.moveTo(p.x+r,p.y);op.arc(p.x,p.y,r,0,Math.PI*2);}
     op.fill();
 
-    // blur+contrast → metaball 浆体融合效果
-    ctx.filter = 'blur(4px) contrast(11)';
-    ctx.drawImage(this._ocPlasma, 0, 0);
-    ctx.filter = 'none';
+    ctx.filter='blur(4px) contrast(11)';
+    ctx.drawImage(this._ocPlasma,0,0);
+    ctx.filter='none';
 
-    // ── 层 4：核层（硬边白核 + 黑描边，高对比）─────────────────────
-    // 在另一张离屏绘制，不经任何滤镜，保证每个核心清晰独立可数
-    const on = this._onCtx;
-    on.clearRect(0, 0, CW, CH);
+    // ── 核层（高对比细胞核，颗颗分明）───────────────────────────
+    const on=this._onCtx;
+    on.clearRect(0,0,CW,CH);
+    const nucR=Math.max(0.9,PR*0.38);
 
-    const nucR = Math.max(0.9, PR * 0.38);
-
-    // 白色填充（亮粉肤白）
-    on.fillStyle = 'rgba(255, 234, 216, 0.92)';
+    on.fillStyle='rgba(255,234,216,0.93)';
     on.beginPath();
-    for (let i=0; i<pts.length; i++) {
-      const p = pts[i];
-      if (p.jammed) continue;
-      on.moveTo(p.x + nucR, p.y);
-      on.arc(p.x, p.y, nucR, 0, Math.PI*2);
-    }
+    for (let i=0;i<pts.length;i++){const p=pts[i];if(p.jammed)continue;on.moveTo(p.x+nucR,p.y);on.arc(p.x,p.y,nucR,0,Math.PI*2);}
     on.fill();
 
-    // 黑色描边（轮廓，与浆色强对比）
-    on.strokeStyle = 'rgba(0,0,0,0.78)';
-    on.lineWidth   = 0.9;
+    on.strokeStyle='rgba(0,0,0,0.80)'; on.lineWidth=0.9;
     on.beginPath();
-    for (let i=0; i<pts.length; i++) {
-      const p = pts[i];
-      if (p.jammed) continue;
-      on.moveTo(p.x + nucR, p.y);
-      on.arc(p.x, p.y, nucR, 0, Math.PI*2);
-    }
+    for (let i=0;i<pts.length;i++){const p=pts[i];if(p.jammed)continue;on.moveTo(p.x+nucR,p.y);on.arc(p.x,p.y,nucR,0,Math.PI*2);}
     on.stroke();
 
-    ctx.drawImage(this._ocNuclei, 0, 0);
+    ctx.drawImage(this._onCtx?this._ocNuclei:this._ocNuclei,0,0);
 
-    // ── 层 5：结痂粒子（深棕，无滤镜，保留颗粒磨砂质感）────────────
-    ctx.fillStyle = 'rgba(68, 28, 8, 0.9)';
+    // ── 结痂颗粒层（无滤镜）────────────────────────────────────
+    ctx.fillStyle='rgba(68,28,8,0.88)';
     ctx.beginPath();
-    for (let i=0; i<pts.length; i++) {
-      const p = pts[i];
-      if (!p.jammed) continue;
-      ctx.moveTo(p.x + 1.8, p.y);
-      ctx.arc(p.x, p.y, 1.8, 0, Math.PI*2);
-    }
+    for (let i=0;i<pts.length;i++){const p=pts[i];if(!p.jammed)continue;ctx.moveTo(p.x+1.8,p.y);ctx.arc(p.x,p.y,1.8,0,Math.PI*2);}
     ctx.fill();
+
+    // ── HUD（右下角：计时器 + 生物相 + 愈合进度）────────────────
+    this._drawHUD();
+  },
+
+  _drawHUD() {
+    const d=BIO.day.toFixed(1);
+    const lines=[
+      `Day ${d}  |  sim-T ${simTime.toFixed(0)}`,
+      BIO.phase,
+      `Wound healed: ${BIO.woundPct.toFixed(0)}%`,
+      `FPS: ${fps}`,
+    ];
+    const lh=16, pd=8, bw=232, bh=lh*lines.length+pd*2-2;
+    const bx=CW-bw-10, by=CH-bh-10;
+    ctx.fillStyle='rgba(6,2,4,0.72)';
+    ctx.beginPath();
+    ctx.roundRect(bx,by,bw,bh,6);
+    ctx.fill();
+    ctx.font='11.5px monospace';
+    ctx.textAlign='left';
+    lines.forEach((t,i)=>{
+      ctx.fillStyle = i===2 ? `hsl(${120*BIO.woundPct/100},60%,55%)` : '#c0b0a0';
+      ctx.fillText(t, bx+pd, by+pd+13+i*lh);
+    });
+
+    // 愈合进度条
+    const barY=by+bh-7, barX=bx+pd, barW=bw-pd*2;
+    ctx.fillStyle='rgba(255,255,255,0.12)';
+    ctx.fillRect(barX,barY,barW,4);
+    ctx.fillStyle=`hsl(${120*BIO.woundPct/100},65%,50%)`;
+    ctx.fillRect(barX,barY,barW*BIO.woundPct/100,4);
   },
 
   _drawHeatmap() {
-    const imgData = ctx.createImageData(CW, CH);
-    const d = imgData.data;
-    for (let i=0; i<H; i++) {
-      for (let j=0; j<W; j++) {
-        const u  = GRID.u[i*W+j];
-        const jm = GRID.jammed[i*W+j];
-        let r, g, b;
-        if (jm) {
-          r=80; g=42; b=18;
-        } else {
-          r = (88  + u*118) | 0;
-          g = (14  + u*128) | 0;
-          b = (18  + u* 92) | 0;
-        }
-        const rowBase = i*CELL_PX*CW;
-        for (let dy=0; dy<CELL_PX; dy++) {
-          const rowOff = (rowBase + dy*CW + j*CELL_PX) * 4;
-          for (let ddx=0; ddx<CELL_PX; ddx++) {
-            const px = rowOff + ddx*4;
-            d[px]=r; d[px+1]=g; d[px+2]=b; d[px+3]=255;
-          }
-        }
+    const imgData=ctx.createImageData(CW,CH);
+    const d=imgData.data;
+    for (let i=0;i<H;i++) for (let j=0;j<W;j++) {
+      const u=GRID.u[i*W+j], jm=GRID.jammed[i*W+j];
+      let r,g,b;
+      if (jm){r=80;g=42;b=18;}
+      else{r=(88+u*118)|0;g=(14+u*128)|0;b=(18+u*92)|0;}
+      const rb=i*CELL_PX*CW;
+      for (let dy=0;dy<CELL_PX;dy++){
+        const ro=(rb+dy*CW+j*CELL_PX)*4;
+        for (let ddx=0;ddx<CELL_PX;ddx++){const px=ro+ddx*4;d[px]=r;d[px+1]=g;d[px+2]=b;d[px+3]=255;}
       }
     }
-    ctx.putImageData(imgData, 0, 0);
+    ctx.putImageData(imgData,0,0);
   }
 };
 
-// ════════════════════════════════════════════════════════════════════
-// 主循环
-// ════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+// §14  公式栏实时更新
+// ══════════════════════════════════════════════════════════════════
+const _dVal=document.getElementById('d-val');
+const _rVal=document.getElementById('r-val');
+const _gVal=document.getElementById('g-val');
+const _cVal=document.getElementById('c-val');
+
+function updateFormulaBar() {
+  const D_eff=(D_NORMAL*P.D_MULT).toFixed(3);
+  const R_eff=(GRID.r[W/2|0*W+W/2|0]).toFixed(3);   // 中央格实际 r
+  const c_eff=(2*Math.sqrt(D_NORMAL*P.D_MULT * R_NORMAL*P.R_MULT)).toFixed(3);
+  _dVal.textContent=D_eff;
+  _rVal.textContent=R_eff;
+  _gVal.textContent=P.GAMMA.toFixed(1);
+  _cVal.textContent=c_eff;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// §15  主循环
+// ══════════════════════════════════════════════════════════════════
 function mainLoop() {
-  for (let s=0; s<SUBSTEPS; s++) {
-    GridLayer.solve();
-    GridLayer.detectPhase();
-  }
+  simTime += SUBSTEPS * dt;
+  _fc++;
+  const now=performance.now();
+  if (now-_ft >= 1000) { fps=Math.round(_fc*1000/(now-_ft)); _fc=0; _ft=now; }
+
+  updateBioCascade();
+  for (let s=0;s<SUBSTEPS;s++) { GridLayer.solve(); GridLayer.detectPhase(); }
   ParticleLayer.update();
   TrailLayer.update();
   RenderLayer.draw();
+  updateFormulaBar();
+
   requestAnimationFrame(mainLoop);
 }
 
-// ════════════════════════════════════════════════════════════════════
-// 鼠标 / 触控伤口交互
-// ════════════════════════════════════════════════════════════════════
-let isDrawing = false;
-canvas.addEventListener('mousedown', e => { isDrawing=true; handleWound(e); });
-canvas.addEventListener('mousemove', e => { if (isDrawing) handleWound(e); });
-window.addEventListener('mouseup',   () => { isDrawing=false; });
-canvas.addEventListener('touchstart', e => { isDrawing=true; handleWound(e.touches[0]); e.preventDefault(); }, { passive:false });
-canvas.addEventListener('touchmove',  e => { if (isDrawing) handleWound(e.touches[0]); e.preventDefault(); }, { passive:false });
-window.addEventListener('touchend',   () => { isDrawing=false; });
+// ══════════════════════════════════════════════════════════════════
+// §16  鼠标 / 触控
+// ══════════════════════════════════════════════════════════════════
+let _drawing=false;
+canvas.addEventListener('mousedown',e=>{_drawing=true;_wound(e);});
+canvas.addEventListener('mousemove',e=>{if(_drawing)_wound(e);});
+window.addEventListener('mouseup',()=>{_drawing=false;});
+canvas.addEventListener('touchstart',e=>{_drawing=true;_wound(e.touches[0]);e.preventDefault();},{passive:false});
+canvas.addEventListener('touchmove', e=>{if(_drawing)_wound(e.touches[0]);e.preventDefault();},{passive:false});
+window.addEventListener('touchend',()=>{_drawing=false;});
+function _wound(e){const r=canvas.getBoundingClientRect();GridLayer.applyWound(e.clientX-r.left,e.clientY-r.top,15);}
 
-function handleWound(e) {
-  const rect = canvas.getBoundingClientRect();
-  GridLayer.applyWound(e.clientX-rect.left, e.clientY-rect.top, 15);
-}
+// ══════════════════════════════════════════════════════════════════
+// §17  lil-gui 控制面板
+// ══════════════════════════════════════════════════════════════════
+const gui=new lil.GUI({width:240, title:'⬡ Fisher-KPP 控制台'});
 
-// ════════════════════════════════════════════════════════════════════
-// lil-gui 参数面板（右上角固定）
-// ════════════════════════════════════════════════════════════════════
-const gui = new lil.GUI({ width: 230, title: '⬡ 动力学参数控制台' });
+// — 动力学参数（.listen() 使预设切换后自动刷新显示）
+const dynF=gui.addFolder('🔬 动力学参数'); dynF.open();
+dynF.add(P,'GAMMA',     0,60,0.5).name('趋化驱动 γ').listen();
+dynF.add(P,'MU',        0,12,0.1).name('牵引摩擦 μ').listen();
+dynF.add(P,'K_REPEL',   0,25,0.5).name('体积排斥').listen();
+dynF.add(P,'K_ALIGN',   0,12,0.1).name('集群对齐 Vicsek').listen();
+dynF.add(P,'BASE_RADIUS',1,8,0.1).name('细胞基础半径').listen();
+dynF.add(P,'NOISE',   0,2.5,0.02).name('布朗噪声').listen();
+dynF.add(P,'D_MULT', 0.1,3.0,0.05).name('扩散倍率 D×').listen();
+dynF.add(P,'R_MULT', 0.1,4.0,0.05).name('增殖倍率 r×').listen();
 
-gui.add(P, 'GAMMA',        0,  60, 0.5).name('趋化驱动力 γ');
-gui.add(P, 'MU',           0,  12, 0.1).name('牵引摩擦 μ');
-gui.add(P, 'K_REPEL',      0,  25, 0.5).name('体积排斥系数');
-gui.add(P, 'K_ALIGN',      0,  12, 0.1).name('集群对齐 Vicsek');
-gui.add(P, 'BASE_RADIUS',  1,   8, 0.1).name('细胞基础半径');
-gui.add(P, 'NOISE',        0, 2.5, 0.02).name('布朗噪声强度');
+// — 对照组预设
+const preF=gui.addFolder('🧪 对照组预设'); preF.open();
+Object.entries(PRESETS).forEach(([name,vals])=>{
+  preF.add({fn:()=>{ Object.assign(P,vals); }}, 'fn').name(name);
+});
 
-gui.add({
-  reset() {
-    GridLayer.init();
-    ParticleLayer.init(N_PARTICLES);
-    TrailLayer.init();
-  }
-}, 'reset').name('↺ 重置伤口 / 重启');
+// — 重置
+gui.add({reset(){
+  simTime=0; BIO.fibrin=1;BIO.macro=0;BIO.tgf=0;BIO.fibro=0;BIO.collagen=0;BIO.day=0;
+  GridLayer.init(); ParticleLayer.init(N_PARTICLES); TrailLayer.init();
+}},'reset').name('↺ 重置伤口 / 重启');
 
-// ════════════════════════════════════════════════════════════════════
-// 启动
-// ════════════════════════════════════════════════════════════════════
+// — 生物级联实时监控（只读，.listen() 自动刷新）
+const bioF=gui.addFolder('🧬 生物级联 (live)');
+bioF.add(bioDisp,'fibrin',  0,1).name('Fibrin 纤维蛋白').listen().disable();
+bioF.add(bioDisp,'macro',   0,1).name('Macrophage 巨噬').listen().disable();
+bioF.add(bioDisp,'tgf',     0,1).name('TGF-β 生长因子').listen().disable();
+bioF.add(bioDisp,'fibro',   0,1).name('Fibroblast 成纤维').listen().disable();
+bioF.add(bioDisp,'collagen',0,1).name('Collagen 胶原').listen().disable();
+bioF.open();
+
+// ══════════════════════════════════════════════════════════════════
+// §18  启动
+// ══════════════════════════════════════════════════════════════════
 GridLayer.init();
 ParticleLayer.init(N_PARTICLES);
 TrailLayer.init();
@@ -644,5 +702,6 @@ requestAnimationFrame(mainLoop);
 </script>
 </body>
 </html>
+
 
 
